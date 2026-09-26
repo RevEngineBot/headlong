@@ -217,8 +217,33 @@ action_search() {
     set -m
     _search_worker "$@" & worker=$!
     set +m
+    # Bound (issue 119): the heartbeat exists to feed the host's inactivity
+    # watchdog, so a model call that never returns is cut by nothing else and
+    # the wake wedges behind it. A sibling watchdog TERMs the worker's whole
+    # group, the same scope a public cancellation kills, so teardown inherits
+    # the tested path. timeout(1) around the model call would re-group the
+    # model out of the worker's process group and break that. The watchdog
+    # runs in its own process group with output discarded, so nothing it
+    # spawns can hold the caller's pipes or outlive a teardown.
+    # MEM_SEARCH_TIMEOUT_S: seconds (default 300; slowest first token seen
+    # on the box was 31s), 0 waits forever, junk falls back to 300.
+    local t="${MEM_SEARCH_TIMEOUT_S:-300}"
+    [[ "$t" =~ ^[0-9]+$ ]] || t=300
+    local _bound_pid="" _bound_mark="${TMPDIR:-/tmp}/mem-search-bound.$$"
+    if [[ "$t" != 0 ]]; then
+        set -m
+        (
+            sleep "$t"
+            kill -0 "$worker" 2>/dev/null || exit 0
+            : > "$_bound_mark"
+            kill -TERM -- "-$worker" 2>/dev/null || true
+        ) >/dev/null 2>&1 & _bound_pid=$!
+        set +m
+    fi
     _cancel_search() {
         trap '' TERM INT
+        [[ -n "${_bound_pid:-}" ]] && { kill -KILL -- "-$_bound_pid" 2>/dev/null || true; wait "$_bound_pid" 2>/dev/null || true; }
+        rm -f "${_bound_mark:-/dev/null}" 2>/dev/null || true
         kill -KILL -- "-$worker" 2>/dev/null || true
         wait "$worker" 2>/dev/null || true
         exit "$1"
@@ -228,6 +253,20 @@ action_search() {
     # Unlike a foreground function call, wait is interrupted by trapped signals.
     wait "$worker" || rc=$?
     trap - TERM INT
+    if [[ -n "$_bound_pid" ]]; then
+        kill -KILL -- "-$_bound_pid" 2>/dev/null || true
+        wait "$_bound_pid" 2>/dev/null || true
+    fi
+    # A mark with rc 0 is a watchdog that fired inside the last instant of a
+    # successful run (a zombie still answers kill -0): the search finished,
+    # so it is not a timeout.
+    if [[ -f "$_bound_mark" ]]; then
+        rm -f "$_bound_mark"
+        if [[ "$rc" -ne 0 ]]; then
+            rc=124
+            printf 'mem search: no reply from the model within %ss (MEM_SEARCH_TIMEOUT_S); giving up on this query.\n' "$t" >&2
+        fi
+    fi
     return "$rc"
 }
 
@@ -538,6 +577,9 @@ Environment:
                          model thinks against it, so keep it roomy)
   MEM_SEARCH_HEARTBEAT_S Seconds between "waiting" lines on stderr while the
                          model works (10; 0 disables)
+  MEM_SEARCH_TIMEOUT_S    Total seconds stage 2 may run before giving up (300;
+                         0 waits forever; junk falls back to 300). A timed-out
+                         search prints one line to stderr and exits 124.
   SHELLM_FAST_MODEL      Cheap model class for the search call
 EOF
     exit 0
