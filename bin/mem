@@ -276,7 +276,7 @@ action_search() {
         # A mark with rc 0 can race a successful completion.
         if [[ "$rc" -ne 0 ]]; then
             rc=124
-            printf 'mem search: no reply from the model within %ss (MEM_SEARCH_TIMEOUT_S); giving up on this query.\\n' "$t" >&2
+            printf 'mem search: no reply from the model within %ss (MEM_SEARCH_TIMEOUT_S); giving up on this query.\n' "$t" >&2
         fi
     fi
     _remove_search_bound
@@ -343,9 +343,14 @@ $(cat "$f")
         _hb_pid=$!
     fi
     local rc=0
+    # Keep the real llm adapter in our worker group. Otherwise llm's own
+    # deadline regroups it, and cancelling search kills its supervisor but
+    # leaves the adapter alive holding our caller's output pipes.
+    # This also applies with the search deadline disabled: public TERM/INT
+    # must still cancel the whole tree. llm retains its own shorter bound.
     # shellcheck disable=SC2086
     printf 'Search these memories for: %s\n\n%s' "$query" "$memories" | \
-        llm ${SHELLM_FAST_MODEL:+-m "$SHELLM_FAST_MODEL"} -t "${MEM_SEARCH_MAX_TOKENS:-16000}" \
+        _LLM_SHARED_PROCESS_GROUP=1 llm ${SHELLM_FAST_MODEL:+-m "$SHELLM_FAST_MODEL"} -t "${MEM_SEARCH_MAX_TOKENS:-16000}" \
             -s "You are a semantic search engine for memory files. Each memory has a filename header (=== filename ===), YAML frontmatter (summary, type), and a body. Return ONLY the filenames and summaries of semantically matching memories, one per line. If nothing matches, say 'No matches found.'" || rc=$?
     # The EXIT trap owns heartbeat cleanup; a second wait here would print
     # "not a child" once the trap has already reaped it.

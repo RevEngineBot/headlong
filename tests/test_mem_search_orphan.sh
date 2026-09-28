@@ -99,6 +99,7 @@ def run_check(name, body, expected, cancel=None, heartbeat="0.1",
             assert not private_dirs, f"leaked private directories: {private_dirs}"
             if expected == 124:
                 assert b"MEM_SEARCH_TIMEOUT_S" in err, err
+                assert err.endswith(b"\n") and not err.endswith(b"\\n"), err
             print(f"ok   {name}", flush=True)
         finally:
             # Clean up even when testing a broken implementation. The worker
