@@ -1321,8 +1321,7 @@ if [[ "$LLM_PROVIDER" == "adapter" ]]; then
         if [[ "${_LLM_SHARED_PROCESS_GROUP:-0}" == 1 ]]; then
             _adapter_shared_group=$(ps -o pgid= -p "$$") || die "Cannot read adapter process group"
             _adapter_shared_group="${_adapter_shared_group//[[:space:]]/}"
-            [[ "$_adapter_shared_group" =~ ^[0-9]+$ && "$_adapter_shared_group" -gt 1 ]] \
-                || die "Invalid adapter process group"
+            [[ "$_adapter_shared_group" =~ ^[0-9]+$ && "$_adapter_shared_group" -gt 1 ]] || die "Invalid adapter process group"
         else
             set -m
         fi
